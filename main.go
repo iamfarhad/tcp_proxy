@@ -73,8 +73,10 @@ func (p *ConnPool) Get() (interface{}, error) {
 			var conn net.Conn
 			var err error
 			if p.tlsConfig != nil {
+				log.Printf("Dialing TLS connection to %s", p.target)
 				conn, err = tls.Dial("tcp", p.target, p.tlsConfig)
 			} else {
+				log.Printf("Dialing plain connection to %s", p.target)
 				conn, err = net.Dial("tcp", p.target)
 			}
 			if err != nil {
@@ -91,8 +93,10 @@ func (p *ConnPool) Get() (interface{}, error) {
 			}
 		default:
 			if p.tlsConfig != nil {
+				log.Printf("Dialing TLS connection to %s", p.target)
 				return tls.Dial("tcp", p.target, p.tlsConfig)
 			}
+			log.Printf("Dialing plain connection to %s", p.target)
 			return net.Dial("tcp", p.target)
 		}
 		return nil, fmt.Errorf("failed to get connection")
@@ -615,6 +619,5 @@ func runClient() {
 
 	wg.Wait()
 }
-
 
 
