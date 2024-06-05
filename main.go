@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -33,7 +34,7 @@ const (
 var (
 	listenAddr = flag.String("listen", "0.0.0.0", "TCP listen address (default: 0.0.0.0)")
 	targetAddr = flag.String("target", "127.0.0.1", "Target address (IPv4 or IPv6)")
-	portRange  = flag.String("ports", "31311-31318", "Port range to listen on")
+	portRange  = flag.String("ports", "31311-31318", "Single port or range of ports to listen on")
 	bufferSize = flag.Int("buffer", 64*1024, "Buffer size for copy operations (default: 64*1024)")
 	useTLS     = flag.Bool("tls", false, "Use TLS")
 	fakeTls    = flag.String("fakeTls", "", "Domain to mimic for fake TLS (implies -tls)")
@@ -577,15 +578,22 @@ func main() {
 
 func runClient() {
 	var startPort, endPort int
-	_, err := fmt.Sscanf(*portRange, "%d-%d", &startPort, &endPort)
-	if err != nil {
-		log.Printf("Invalid port range: %v\n", err)
+	ports := strings.Split(*portRange, "-")
+	if len(ports) == 1 {
+		startPort, _ = strconv.Atoi(ports[0])
+		endPort = startPort
+	} else if len(ports) == 2 {
+		startPort, _ = strconv.Atoi(ports[0])
+		endPort, _ = strconv.Atoi(ports[1])
+	} else {
+		log.Printf("Invalid port range: %v\n", *portRange)
 		return
 	}
 
 	buffer := make([]byte, *bufferSize)
 
 	var tlsConfig *tls.Config
+	var err error
 	if *useTLS || *fakeTls != "" {
 		tlsConfig, err = loadTLSConfig(*certFile, *keyFile, *fakeTls)
 		if err != nil {
@@ -607,5 +615,6 @@ func runClient() {
 
 	wg.Wait()
 }
+
 
 
