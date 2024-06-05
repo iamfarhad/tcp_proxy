@@ -303,144 +303,142 @@ func startListener(port int, targetBase, listenBase string, buffer []byte, tlsCo
 }
 
 func handleRelayConnection(src net.Conn, pool *ConnPool, buffer []byte, originalPort int) {
-	defer src.Close()
+    defer src.Close()
 
-	conn, err := pool.Get()
-	if err != nil {
-		log.Printf("Failed to get connection: %v\n", err)
-		return
-	}
-	defer pool.Put(conn)
+    conn, err := pool.Get()
+    if err != nil {
+        log.Printf("Failed to get connection: %v\n", err)
+        return
+    }
+    defer pool.Put(conn)
 
-	// Send the original port number to the relay server
-	if stream, ok := conn.(io.Writer); ok {
-		_, err = stream.Write([]byte(fmt.Sprintf("%d\n", originalPort)))
-		if err != nil {
-			log.Printf("Failed to send original port to relay: %v\n", err)
-			return
-		}
-	}
+    // Send the original port number to the relay server
+    if _, err := fmt.Fprintf(conn.(io.Writer), "%d\n", originalPort); err != nil {
+        log.Printf("Failed to send original port to relay: %v\n", err)
+        return
+    }
 
-	if pool.mux {
-		sess := conn.(*smux.Session)
-		stream, err := sess.OpenStream()
-		if err != nil {
-			log.Printf("Failed to open stream: %v\n", err)
-			return
-		}
-		defer stream.Close()
+    if pool.mux {
+        sess := conn.(*smux.Session)
+        stream, err := sess.OpenStream()
+        if err != nil {
+            log.Printf("Failed to open stream: %v\n", err)
+            return
+        }
+        defer stream.Close()
 
-		tcpConn := src.(*net.TCPConn)
-		setTCPKeepAlive(tcpConn)
-		setTCPNoDelay(tcpConn)
-		optimizeTCPWindowSize(tcpConn)
+        tcpConn := src.(*net.TCPConn)
+        setTCPKeepAlive(tcpConn)
+        setTCPNoDelay(tcpConn)
+        optimizeTCPWindowSize(tcpConn)
 
-		var wg sync.WaitGroup
-		wg.Add(2)
+        var wg sync.WaitGroup
+        wg.Add(2)
 
-		go func() {
-			defer wg.Done()
-			io.CopyBuffer(stream, src, buffer)
-		}()
-		go func() {
-			defer wg.Done()
-			io.CopyBuffer(src, stream, buffer)
-		}()
+        go func() {
+            defer wg.Done()
+            io.CopyBuffer(stream, src, buffer)
+        }()
+        go func() {
+            defer wg.Done()
+            io.CopyBuffer(src, stream, buffer)
+        }()
 
-		wg.Wait()
-	} else {
-		var tcpDstConn *net.TCPConn
-		if pool.tlsConfig != nil {
-			dst := conn.(*tls.Conn)
-			tcpDstConn = dst.NetConn().(*net.TCPConn)
-		} else {
-			tcpDstConn = conn.(*net.TCPConn)
-		}
-		tcpSrcConn := src.(*net.TCPConn)
+        wg.Wait()
+    } else {
+        var tcpDstConn *net.TCPConn
+        if pool.tlsConfig != nil {
+            dst := conn.(*tls.Conn)
+            tcpDstConn = dst.NetConn().(*net.TCPConn)
+        } else {
+            tcpDstConn = conn.(*net.TCPConn)
+        }
+        tcpSrcConn := src.(*net.TCPConn)
 
-		setTCPKeepAlive(tcpSrcConn)
-		setTCPNoDelay(tcpSrcConn)
-		optimizeTCPWindowSize(tcpSrcConn)
+        setTCPKeepAlive(tcpSrcConn)
+        setTCPNoDelay(tcpSrcConn)
+        optimizeTCPWindowSize(tcpSrcConn)
 
-		setTCPKeepAlive(tcpDstConn)
-		setTCPNoDelay(tcpDstConn)
-		optimizeTCPWindowSize(tcpDstConn)
+        setTCPKeepAlive(tcpDstConn)
+        setTCPNoDelay(tcpDstConn)
+        optimizeTCPWindowSize(tcpDstConn)
 
-		var wg sync.WaitGroup
-		wg.Add(2)
+        var wg sync.WaitGroup
+        wg.Add(2)
 
-		go func() {
-			defer wg.Done()
-			zeroCopy(tcpSrcConn, tcpDstConn)
-		}()
-		go func() {
-			defer wg.Done()
-			zeroCopy(tcpDstConn, tcpSrcConn)
-		}()
+        go func() {
+            defer wg.Done()
+            zeroCopy(tcpSrcConn, tcpDstConn)
+        }()
+        go func() {
+            defer wg.Done()
+            zeroCopy(tcpDstConn, tcpSrcConn)
+        }()
 
-		wg.Wait()
-	}
+        wg.Wait()
+    }
 }
 
+
 func startRelayListener() {
-	listener, err := net.Listen("tcp", *listenAddr)
-	if err != nil {
-		log.Printf("Failed to listen on %s: %v\n", *listenAddr, err)
-		return
-	}
-	defer listener.Close()
+    listener, err := net.Listen("tcp", *listenAddr)
+    if err != nil {
+        log.Printf("Failed to listen on %s: %v\n", *listenAddr, err)
+        return
+    }
+    defer listener.Close()
 
-	log.Printf("Relay listening on %s\n", *listenAddr)
+    log.Printf("Relay listening on %s\n", *listenAddr)
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Failed to accept connection: %v\n", err)
-			continue
-		}
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            log.Printf("Failed to accept connection: %v\n", err)
+            continue
+        }
 
-		// Read the original port number from the connection
-		var originalPort int
-		_, err = fmt.Fscanf(conn, "%d\n", &originalPort)
-		if err != nil {
-			log.Printf("Failed to read original port: %v\n", err)
-			conn.Close()
-			continue
-		}
+        // Read the original port number from the connection
+        var originalPort int
+        if _, err := fmt.Fscanf(conn, "%d\n", &originalPort); err != nil {
+            log.Printf("Failed to read original port: %v\n", err)
+            conn.Close()
+            continue
+        }
 
-		go handleRelay(conn, originalPort)
-	}
+        go handleRelay(conn, originalPort)
+    }
 }
 
 func handleRelay(src net.Conn, originalPort int) {
-	defer src.Close()
+    defer src.Close()
 
-	// Determine the destination address based on the original port
-	destAddr := fmt.Sprintf("localhost:%d", originalPort)
-	dst, err := net.Dial("tcp", destAddr)
-	if err != nil {
-		log.Printf("Failed to connect to destination %s: %v\n", destAddr, err)
-		return
-	}
-	defer dst.Close()
+    // Determine the destination address based on the original port
+    destAddr := fmt.Sprintf("localhost:%d", originalPort)
+    dst, err := net.Dial("tcp", destAddr)
+    if err != nil {
+        log.Printf("Failed to connect to destination %s: %v\n", destAddr, err)
+        return
+    }
+    defer dst.Close()
 
-	log.Printf("Relaying connection from %d to %s\n", originalPort, destAddr)
+    log.Printf("Relaying connection from %d to %s\n", originalPort, destAddr)
 
-	// Copy data between src and dst
-	var wg sync.WaitGroup
-	wg.Add(2)
+    // Copy data between src and dst
+    var wg sync.WaitGroup
+    wg.Add(2)
 
-	go func() {
-		defer wg.Done()
-		io.Copy(dst, src)
-	}()
-	go func() {
-		defer wg.Done()
-		io.Copy(src, dst)
-	}()
+    go func() {
+        defer wg.Done()
+        io.Copy(dst, src)
+    }()
+    go func() {
+        defer wg.Done()
+        io.Copy(src, dst)
+    }()
 
-	wg.Wait()
+    wg.Wait()
 }
+
 
 func loadTLSConfig(certFile, keyFile, fakeTls string) (*tls.Config, error) {
 	if _, err := os.Stat(certFile); os.IsNotExist(err) {
