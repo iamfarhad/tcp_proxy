@@ -258,47 +258,13 @@ func startListener(port int, targetBase, listenBase string, buffer []byte, tlsCo
 	target := fmt.Sprintf("%s:%d", formatTargetAddress(targetBase), relayPort)
 	pool := NewConnPool(target, tlsConfig, 100, mux)
 
-	epollFd, err := syscall.EpollCreate1(0)
-	if err != nil {
-		log.Printf("Failed to create epoll instance: %v\n", err)
-		return
-	}
-	defer syscall.Close(epollFd)
-
-	listenFd, err := listener.(*net.TCPListener).File()
-	if err != nil {
-		log.Printf("Failed to get file descriptor from listener: %v\n", err)
-		return
-	}
-
-	err = syscall.EpollCtl(epollFd, syscall.EPOLL_CTL_ADD, int(listenFd.Fd()), &syscall.EpollEvent{
-		Events: syscall.EPOLLIN,
-		Fd:     int32(listenFd.Fd()),
-	})
-	if err != nil {
-		log.Printf("Failed to add listener fd to epoll: %v\n", err)
-		return
-	}
-
-	events := make([]syscall.EpollEvent, 100)
-
 	for {
-		n, err := syscall.EpollWait(epollFd, events, -1)
-		if err != nil && err != syscall.EINTR {
-			log.Printf("Failed to wait on epoll instance: %v\n", err)
-			return
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Failed to accept connection: %v\n", err)
+			continue
 		}
-
-		for i := 0; i < n; i++ {
-			if events[i].Fd == int32(listenFd.Fd()) {
-				conn, err := listener.Accept()
-				if err != nil {
-					log.Printf("Failed to accept connection: %v\n", err)
-					continue
-				}
-				go handleRelayConnection(conn, pool, buffer, port)
-			}
-		}
+		go handleRelayConnection(conn, pool, buffer, port)
 	}
 }
 
@@ -312,6 +278,7 @@ func handleRelayConnection(src net.Conn, pool *ConnPool, buffer []byte, original
 	}
 	defer pool.Put(conn)
 
+	// Send the original port number to the relay server
 	// Send the original port number to the relay server
 	if _, err := fmt.Fprintf(conn.(io.Writer), "%d\n", originalPort); err != nil {
 		log.Printf("Failed to send original port to relay: %v\n", err)
@@ -396,22 +363,20 @@ func startRelayListener() {
 			continue
 		}
 
-		// Read the original port number from the connection
-		var originalPort int
-		if _, err := fmt.Fscanf(conn, "%d\n", &originalPort); err != nil {
-			log.Printf("Failed to read original port: %v\n", err)
-			conn.Close()
-			continue
-		}
-
-		go handleRelay(conn, originalPort)
+		go handleRelay(conn)
 	}
 }
 
-func handleRelay(src net.Conn, originalPort int) {
+func handleRelay(src net.Conn) {
 	defer src.Close()
 
-	// Determine the destination address based on the original port
+	var originalPort int
+	_, err := fmt.Fscanf(src, "%d\n", &originalPort)
+	if err != nil {
+		log.Printf("Failed to read original port: %v\n", err)
+		return
+	}
+
 	destAddr := fmt.Sprintf("localhost:%d", originalPort)
 	dst, err := net.Dial("tcp", destAddr)
 	if err != nil {
@@ -422,7 +387,6 @@ func handleRelay(src net.Conn, originalPort int) {
 
 	log.Printf("Relaying connection from %d to %s\n", originalPort, destAddr)
 
-	// Copy data between src and dst
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -464,7 +428,6 @@ func loadTLSConfig(certFile, keyFile, fakeTls string) (*tls.Config, error) {
 }
 
 func generateCertificates(certFile, keyFile string) error {
-	// Generate a new private key.
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("failed to generate private key: %w", err)
@@ -529,7 +492,6 @@ func formatTargetAddress(addr string) string {
 }
 
 func tuneSystem() {
-	// Increase the file descriptor limit
 	rLimit := &unix.Rlimit{
 		Cur: 10240,
 		Max: 10240,
@@ -538,14 +500,12 @@ func tuneSystem() {
 		log.Printf("Failed to set rlimit: %v\n", err)
 	}
 
-	// Adjust TCP parameters
 	sysctl("net.core.rmem_max", "16777216")
 	sysctl("net.core.wmem_max", "16777216")
 	sysctl("net.ipv4.tcp_rmem", "4096 87380 16777216")
 	sysctl("net.ipv4.tcp_wmem", "4096 65536 16777216")
 	sysctl("net.ipv4.tcp_congestion_control", "bbr")
 
-	// Set the number of OS threads to match the number of CPUs
 	runtime.GOMAXPROCS(runtime.NumCPU())
 }
 
