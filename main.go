@@ -401,7 +401,12 @@ func startRelayListener() {
 
 		// Read the original port number from the connection
 		var originalPort int
-		fmt.Fscanf(conn, "%d\n", &originalPort)
+		_, err = fmt.Fscanf(conn, "%d\n", &originalPort)
+		if err != nil {
+			log.Printf("Failed to read original port: %v\n", err)
+			conn.Close()
+			continue
+		}
 
 		go handleRelay(conn, originalPort)
 	}
@@ -619,5 +624,4 @@ func runClient() {
 
 	wg.Wait()
 }
-
 
