@@ -34,7 +34,7 @@ const (
 var (
 	listenAddr = flag.String("listen", "0.0.0.0", "TCP listen address (default: 0.0.0.0)")
 	targetAddr = flag.String("target", "127.0.0.1", "Target address (IPv4 or IPv6)")
-	portRange  = flag.String("ports", "31311-31318", "Single port or range of ports to listen on")
+	portRange  = flag.String("ports", "21212", "Single port or range of ports to listen on")
 	bufferSize = flag.Int("buffer", 64*1024, "Buffer size for copy operations (default: 64*1024)")
 	useTLS     = flag.Bool("tls", false, "Use TLS")
 	fakeTls    = flag.String("fakeTls", "", "Domain to mimic for fake TLS (implies -tls)")
