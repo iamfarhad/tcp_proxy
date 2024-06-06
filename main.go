@@ -205,7 +205,7 @@ func main() {
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
 	bufferSize := flag.Int("buffer-size", 2048*1024, "Buffer size for TCP connections") // Increased buffer size
-	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
+	workerCount := flag.Int("workers", 50000, "Number of concurrent workers") // Increased worker pool size
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
 
