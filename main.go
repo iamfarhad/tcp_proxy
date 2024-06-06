@@ -1,10 +1,12 @@
 package main
 
 import (
+    "bufio"
     "flag"
     "io"
     "log"
     "net"
+    "strings"
     "sync"
 )
 
@@ -74,15 +76,13 @@ type RelayServer struct {
 func handleRelayConnection(localConn net.Conn) {
     defer localConn.Close()
 
-    buf := make([]byte, 4096)
-    n, err := localConn.Read(buf)
+    reader := bufio.NewReader(localConn)
+    destAddr, err := reader.ReadString('\n')
     if err != nil {
-        log.Printf("Failed to read from connection: %v", err)
+        log.Printf("Failed to read destination address: %v", err)
         return
     }
-
-    destAddr := string(buf[:n])
-    destAddr = destAddr[:len(destAddr)-1] // Remove newline character
+    destAddr = strings.TrimSpace(destAddr)
     log.Printf("Connecting to destination: %s", destAddr)
 
     remoteConn, err := net.Dial("tcp", destAddr)
