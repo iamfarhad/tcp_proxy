@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 )
 
 func main() {
@@ -92,26 +93,19 @@ func relayConnection(conn net.Conn, serverAddress string) {
 
 	log.Printf("Relaying data between client %s and server %s", conn.RemoteAddr(), serverConn.RemoteAddr())
 
-	done := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	go func() {
-		_, err := io.Copy(serverConn, conn)
-		if err != nil {
-			log.Printf("Error relaying data from client %s to server %s: %v", conn.RemoteAddr(), serverConn.RemoteAddr(), err)
-		}
-		done <- err
-	}()
+	go copyData(&wg, serverConn, conn)
+	go copyData(&wg, conn, serverConn)
 
-	go func() {
-		_, err := io.Copy(conn, serverConn)
-		if err != nil {
-			log.Printf("Error relaying data from server %s to client %s: %v", serverConn.RemoteAddr(), conn.RemoteAddr(), err)
-		}
-		done <- err
-	}()
+	wg.Wait()
+}
 
-	err = <-done
+func copyData(wg *sync.WaitGroup, dst net.Conn, src net.Conn) {
+	defer wg.Done()
+	_, err := io.Copy(dst, src)
 	if err != nil {
-		log.Printf("Relay error: %v", err)
+		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr(), dst.RemoteAddr(), err)
 	}
 }
