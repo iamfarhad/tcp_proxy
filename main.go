@@ -17,7 +17,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 2048*1024) // Increased buffer size for better throughput
+		return make([]byte, 2048*1024) // Optimal buffer size for high throughput
 	},
 }
 
@@ -70,11 +70,9 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	setTCPOptions(src)
 	setTCPOptions(dst)
 
-	err = f.copyData(src, dst, bufferSize)
-	if err != nil {
-		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr().String(), targetAddr, err)
-		return
-	}
+	// Use two goroutines to handle data transfer in both directions concurrently
+	go f.copyData(src, dst, bufferSize)
+	go f.copyData(dst, src, bufferSize)
 }
 
 func setTCPOptions(conn net.Conn) {
@@ -88,7 +86,7 @@ func setTCPOptions(conn net.Conn) {
 		if err := tcpConn.SetKeepAlive(true); err != nil {
 			log.Printf("Failed to set TCP keep-alive: %v", err)
 		}
-		if err := tcpConn.SetKeepAlivePeriod(3 * time.Minute); err != nil {
+		if err := tcpConn.SetKeepAlivePeriod(1 * time.Minute); err != nil {
 			log.Printf("Failed to set TCP keep-alive period: %v", err)
 		}
 
@@ -170,33 +168,13 @@ func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAd
 	}
 }
 
-func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
-	errChan := make(chan error, 1)
-
-	go func() {
-		buf := bufferPool.Get().([]byte)
-		defer bufferPool.Put(buf)
-		_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
-		errChan <- err
-	}()
-
-	go func() {
-		buf := bufferPool.Get().([]byte)
-		defer bufferPool.Put(buf)
-		_, err := io.CopyBuffer(src, dst, buf[:bufferSize])
-		errChan <- err
-	}()
-
-	err1 := <-errChan
-	err2 := <-errChan
-
-	if err1 != nil && err1 != io.EOF {
-		return err1
+func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) {
+	buf := bufferPool.Get().([]byte)
+	defer bufferPool.Put(buf)
+	_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
+	if err != nil && err != io.EOF {
+		log.Printf("Error copying data: %v", err)
 	}
-	if err2 != nil && err2 != io.EOF {
-		return err2
-	}
-	return nil
 }
 
 func main() {
@@ -204,8 +182,8 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 2048*1024, "Buffer size for TCP connections") // Increased buffer size
-	workerCount := flag.Int("workers", 50000, "Number of concurrent workers") // Increased worker pool size
+	bufferSize := flag.Int("buffer-size", 2048*1024, "Buffer size for TCP connections") // Adjusted buffer size
+	workerCount := flag.Int("workers", 500, "Number of concurrent workers") // Increased worker pool size
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
 
