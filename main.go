@@ -17,7 +17,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 2048*1024*10248) // Optimal buffer size for high throughput
+		return make([]byte, 2048*1024*1024) // Optimal buffer size for high throughput
 	},
 }
 
@@ -100,10 +100,10 @@ func setTCPOptions(conn net.Conn) {
 		}
 
 		// Set send and receive buffer sizes
-		if err := tcpConn.SetReadBuffer(2048 * 1024); err != nil {
+		if err := tcpConn.SetReadBuffer(2048*1024 * 1024); err != nil {
 			log.Printf("Failed to set SO_RCVBUF: %v", err)
 		}
-		if err := tcpConn.SetWriteBuffer(2048 * 1024); err != nil {
+		if err := tcpConn.SetWriteBuffer(2048*1024 * 1024); err != nil {
 			log.Printf("Failed to set SO_SNDBUF: %v", err)
 		}
 	}
@@ -194,8 +194,8 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 2048*1024*10248, "Buffer size for TCP connections") // Adjusted buffer size
-	workerCount := flag.Int("workers", 10000, "Number of concurrent workers") // Increased worker pool size
+	bufferSize := flag.Int("buffer-size", 2048*1024*1024, "Buffer size for TCP connections") // Adjusted buffer size
+	workerCount := flag.Int("workers", 1000, "Number of concurrent workers") // Increased worker pool size
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
 
