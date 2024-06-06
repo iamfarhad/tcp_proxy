@@ -42,7 +42,7 @@ func main() {
 	flag.StringVar(&mode, "mode", ClientMode, "Mode of operation (client or server)")
 	flag.StringVar(&localPort, "localPort", "", "Local port for client mode")
 	flag.StringVar(&destination, "destination", "", "Destination address for client mode (host:port)")
-	flag.StringVar(&serverAddress, "serverAddress", "", "Server address for server mode (host:port)")
+	flag.StringVar(&serverAddress, "server-address", "", "Server address for server mode (host:port)")
 	flag.Parse()
 
 	switch mode {
@@ -73,7 +73,7 @@ func main() {
 		}
 	case ServerMode:
 		if serverAddress == "" {
-			fmt.Println("Please provide serverAddress")
+			fmt.Println("Please provide server-address")
 			return
 		}
 		serverAddr := serverAddress
