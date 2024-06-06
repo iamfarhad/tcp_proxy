@@ -17,7 +17,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 256*1024) // Increased buffer size for better throughput
+		return make([]byte, 512*1024) // Increased buffer size for better throughput
 	},
 }
 
@@ -59,7 +59,7 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 	defer src.Close()
 	defer func() { <-workerPool }()
 
-	dst, err := net.Dial("tcp", targetAddr)
+	dst, err := dial(targetAddr)
 	if err != nil {
 		log.Printf("Failed to connect to target %s: %v", targetAddr, err)
 		return
@@ -77,6 +77,36 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 	}
 }
 
+func dial(address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address %s: %v", address, err)
+	}
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port %s: %v", port, err)
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup IP for host %s: %v", host, err)
+	}
+
+	var conn net.Conn
+	for _, ip := range ips {
+		addr := &net.TCPAddr{
+			IP:   ip,
+			Port: portInt,
+		}
+		conn, err = net.DialTCP("tcp", nil, addr)
+		if err == nil {
+			return conn, nil
+		}
+	}
+
+	return nil, fmt.Errorf("failed to connect to any resolved address for %s", address)
+}
+
 func setTCPOptions(conn net.Conn) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		// Disable Nagle's algorithm
@@ -85,10 +115,10 @@ func setTCPOptions(conn net.Conn) {
 		}
 
 		// Set send and receive buffer sizes
-		if err := tcpConn.SetReadBuffer(256 * 1024); err != nil {
+		if err := tcpConn.SetReadBuffer(512 * 1024); err != nil {
 			log.Printf("Failed to set SO_RCVBUF: %v", err)
 		}
-		if err := tcpConn.SetWriteBuffer(256 * 1024); err != nil {
+		if err := tcpConn.SetWriteBuffer(512 * 1024); err != nil {
 			log.Printf("Failed to set SO_SNDBUF: %v", err)
 		}
 
@@ -141,7 +171,7 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 256*1024, "Buffer size for TCP connections") // Increased buffer size
+	bufferSize := flag.Int("buffer-size", 512*1024, "Buffer size for TCP connections") // Increased buffer size
 	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
