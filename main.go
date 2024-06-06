@@ -75,14 +75,29 @@ func startClient(serverAddress, clientPort string) {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	log.Printf("Handling connection from %s", conn.RemoteAddr())
-	_, err := io.Copy(conn, conn)
-	if err != nil {
-		log.Printf("Error handling connection: %v", err)
+	buf := make([]byte, 32*1024) // 32KB buffer
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Error reading from %s: %v", conn.RemoteAddr(), err)
+			}
+			break
+		}
+		if n > 0 {
+			log.Printf("Read %d bytes from %s", n, conn.RemoteAddr())
+			m, err := conn.Write(buf[:n])
+			if err != nil {
+				log.Printf("Error writing to %s: %v", conn.RemoteAddr(), err)
+				break
+			}
+			log.Printf("Wrote %d bytes to %s", m, conn.RemoteAddr())
+		}
 	}
 }
 
-func relayConnection(conn net.Conn, serverAddress string) {
-	defer conn.Close()
+func relayConnection(clientConn net.Conn, serverAddress string) {
+	defer clientConn.Close()
 
 	serverConn, err := net.Dial("tcp", serverAddress)
 	if err != nil {
@@ -91,36 +106,36 @@ func relayConnection(conn net.Conn, serverAddress string) {
 	}
 	defer serverConn.Close()
 
-	log.Printf("Relaying data between client %s and server %s", conn.RemoteAddr(), serverConn.RemoteAddr())
+	log.Printf("Relaying data between client %s and server %s", clientConn.RemoteAddr(), serverConn.RemoteAddr())
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	go copyData(&wg, serverConn, conn)
-	go copyData(&wg, conn, serverConn)
+	go copyData(&wg, serverConn, clientConn, "client to server")
+	go copyData(&wg, clientConn, serverConn, "server to client")
 
 	wg.Wait()
 }
 
-func copyData(wg *sync.WaitGroup, dst net.Conn, src net.Conn) {
+func copyData(wg *sync.WaitGroup, dst net.Conn, src net.Conn, direction string) {
 	defer wg.Done()
 	buf := make([]byte, 32*1024) // 32KB buffer
 	for {
 		n, err := src.Read(buf)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Error reading from %s: %v", src.RemoteAddr(), err)
+				log.Printf("Error reading from %s during %s: %v", src.RemoteAddr(), direction, err)
 			}
 			break
 		}
 		if n > 0 {
-			log.Printf("Read %d bytes from %s", n, src.RemoteAddr())
+			log.Printf("Read %d bytes from %s during %s", n, src.RemoteAddr(), direction)
 			m, err := dst.Write(buf[:n])
 			if err != nil {
-				log.Printf("Error writing to %s: %v", dst.RemoteAddr(), err)
+				log.Printf("Error writing to %s during %s: %v", dst.RemoteAddr(), direction, err)
 				break
 			}
-			log.Printf("Wrote %d bytes to %s", m, dst.RemoteAddr())
+			log.Printf("Wrote %d bytes to %s during %s", m, dst.RemoteAddr(), direction)
 		}
 	}
 }
