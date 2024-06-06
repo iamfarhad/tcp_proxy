@@ -12,11 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 512*1024) // Increased buffer size for better throughput
+		return make([]byte, 2048*1024) // Increased buffer size for better throughput
 	},
 }
 
@@ -58,7 +59,7 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	defer src.Close()
 	defer func() { <-workerPool }()
 
-	dst, err := dialTCP(targetAddr)
+	dst, err := net.Dial("tcp", targetAddr)
 	if err != nil {
 		log.Printf("Failed to connect to target %s: %v", targetAddr, err)
 		return
@@ -76,10 +77,6 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	}
 }
 
-func dialTCP(address string) (net.Conn, error) {
-	return net.Dial("tcp", address)
-}
-
 func setTCPOptions(conn net.Conn) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		// Disable Nagle's algorithm
@@ -88,10 +85,10 @@ func setTCPOptions(conn net.Conn) {
 		}
 
 		// Set send and receive buffer sizes
-		if err := tcpConn.SetReadBuffer(512 * 1024); err != nil {
+		if err := tcpConn.SetReadBuffer(2048 * 1024); err != nil {
 			log.Printf("Failed to set SO_RCVBUF: %v", err)
 		}
-		if err := tcpConn.SetWriteBuffer(512 * 1024); err != nil {
+		if err := tcpConn.SetWriteBuffer(2048 * 1024); err != nil {
 			log.Printf("Failed to set SO_SNDBUF: %v", err)
 		}
 	}
@@ -151,6 +148,7 @@ func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAd
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 
+	targetConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, _, err := targetConn.ReadFromUDP(buf)
 	if err != nil {
 		log.Printf("Failed to read from target UDP %s: %v", targetAddr, err)
@@ -198,7 +196,7 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 512*1024, "Buffer size for TCP connections") // Increased buffer size
+	bufferSize := flag.Int("buffer-size", 2048*1024, "Buffer size for TCP connections") // Increased buffer size
 	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
