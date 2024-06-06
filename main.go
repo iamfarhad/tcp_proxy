@@ -17,7 +17,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 1024*1024) // Increased buffer size for better throughput
+		return make([]byte, 256*1024) // Increased buffer size for better throughput
 	},
 }
 
@@ -86,38 +86,30 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 }
 
 func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
-	wg := &sync.WaitGroup{}
-	wg.Add(2)
-
-	errChan := make(chan error, 2)
+	errChan := make(chan error, 1)
 
 	go func() {
-		defer wg.Done()
 		buf := bufferPool.Get().([]byte)
 		defer bufferPool.Put(buf)
 		_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
-		if err != nil && err != io.EOF {
-			errChan <- err
-		}
+		errChan <- err
 	}()
 
 	go func() {
-		defer wg.Done()
 		buf := bufferPool.Get().([]byte)
 		defer bufferPool.Put(buf)
 		_, err := io.CopyBuffer(src, dst, buf[:bufferSize])
-		if err != nil && err != io.EOF {
-			errChan <- err
-		}
+		errChan <- err
 	}()
 
-	wg.Wait()
-	close(errChan)
+	err1 := <-errChan
+	err2 := <-errChan
 
-	for err := range errChan {
-		if err != nil {
-			return err
-		}
+	if err1 != nil && err1 != io.EOF {
+		return err1
+	}
+	if err2 != nil && err2 != io.EOF {
+		return err2
 	}
 	return nil
 }
@@ -127,7 +119,7 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 1024*1024, "Buffer size for TCP connections") // Increased buffer size
+	bufferSize := flag.Int("buffer-size", 256*1024, "Buffer size for TCP connections") // Increased buffer size
 	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
