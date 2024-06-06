@@ -84,6 +84,14 @@ func setTCPOptions(conn net.Conn) {
 			log.Printf("Failed to set TCP_NODELAY: %v", err)
 		}
 
+		// Enable keep-alive
+		if err := tcpConn.SetKeepAlive(true); err != nil {
+			log.Printf("Failed to set TCP keep-alive: %v", err)
+		}
+		if err := tcpConn.SetKeepAlivePeriod(3 * time.Minute); err != nil {
+			log.Printf("Failed to set TCP keep-alive period: %v", err)
+		}
+
 		// Set send and receive buffer sizes
 		if err := tcpConn.SetReadBuffer(2048 * 1024); err != nil {
 			log.Printf("Failed to set SO_RCVBUF: %v", err)
