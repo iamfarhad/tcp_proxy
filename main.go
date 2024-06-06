@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "net/http/pprof"
 )
 
 var bufferPool = sync.Pool{
@@ -70,7 +71,7 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	setTCPOptions(src)
 	setTCPOptions(dst)
 
-	errChan := make(chan error, 1)
+	errChan := make(chan error, 2)
 	go func() {
 		errChan <- f.copyData(src, dst, bufferSize)
 	}()
@@ -78,9 +79,10 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 		errChan <- f.copyData(dst, src, bufferSize)
 	}()
 
-	err = <-errChan
-	if err != nil && err != io.EOF {
-		log.Printf("Error during data copy: %v", err)
+	for i := 0; i < 2; i++ {
+		if err := <-errChan; err != nil && err != io.EOF {
+			log.Printf("Error during data copy: %v", err)
+		}
 	}
 }
 
