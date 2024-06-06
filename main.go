@@ -46,6 +46,7 @@ func startServer(address string) {
 			log.Printf("Error accepting connection: %v", err)
 			continue
 		}
+		log.Printf("Accepted connection from %s", conn.RemoteAddr())
 		go handleConnection(conn)
 	}
 }
@@ -65,13 +66,18 @@ func startClient(serverAddress, clientPort string) {
 			log.Printf("Error accepting connection: %v", err)
 			continue
 		}
+		log.Printf("Accepted connection from %s, relaying to server %s", conn.RemoteAddr(), serverAddress)
 		go relayConnection(conn, serverAddress)
 	}
 }
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
-	io.Copy(conn, conn)
+	log.Printf("Handling connection from %s", conn.RemoteAddr())
+	_, err := io.Copy(conn, conn)
+	if err != nil {
+		log.Printf("Error handling connection: %v", err)
+	}
 }
 
 func relayConnection(conn net.Conn, serverAddress string) {
@@ -84,6 +90,10 @@ func relayConnection(conn net.Conn, serverAddress string) {
 	}
 	defer serverConn.Close()
 
+	log.Printf("Relaying data between client %s and server %s", conn.RemoteAddr(), serverConn.RemoteAddr())
 	go io.Copy(serverConn, conn)
-	io.Copy(conn, serverConn)
+	_, err = io.Copy(conn, serverConn)
+	if err != nil {
+		log.Printf("Error relaying connection: %v", err)
+	}
 }
