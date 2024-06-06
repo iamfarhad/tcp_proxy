@@ -25,8 +25,19 @@ func handleClient(client net.Conn, targetAddr string) {
 		}
 		defer serverConn.Close()
 
-		go io.CopyBuffer(serverConn, client, make([]byte, BufferSize))
-		io.CopyBuffer(client, serverConn, make([]byte, BufferSize))
+		log.Printf("Established connection from %s to %s", client.RemoteAddr(), targetAddr)
+
+		// Transfer data between client and server
+		go func() {
+			_, err := io.CopyBuffer(serverConn, client, make([]byte, BufferSize))
+			if err != nil {
+				log.Printf("Error while copying data from client to server: %v", err)
+			}
+		}()
+		_, err = io.CopyBuffer(client, serverConn, make([]byte, BufferSize))
+		if err != nil {
+			log.Printf("Error while copying data from server to client: %v", err)
+		}
 	} else {
 		log.Println("Handling connection without forwarding.")
 		buf := make([]byte, BufferSize)
@@ -51,6 +62,9 @@ func startServer(listenAddr, targetAddr string) {
 	}
 	defer listener.Close()
 	log.Printf("Server listening on %s", listenAddr)
+	if targetAddr != "" {
+		log.Printf(" and forwarding to %s", targetAddr)
+	}
 
 	for {
 		conn, err := listener.Accept()
