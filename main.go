@@ -10,6 +10,7 @@ import (
 const (
 	ClientMode = "client"
 	ServerMode = "server"
+	BufferSize = 1024
 )
 
 func handleClient(client net.Conn, serverAddr string) {
@@ -24,23 +25,19 @@ func handleClient(client net.Conn, serverAddr string) {
 
 	errCh := make(chan error, 1)
 
-	go func() {
-		_, err := io.CopyBuffer(serverConn, client, make([]byte, 1024))
+	copyData := func(dst io.Writer, src io.Reader) {
+		_, err := io.CopyBuffer(dst, src, make([]byte, BufferSize))
 		errCh <- err
-	}()
+	}
 
-	go func() {
-		_, err := io.CopyBuffer(client, serverConn, make([]byte, 1024))
-		errCh <- err
-	}()
+	go copyData(serverConn, client)
+	go copyData(client, serverConn)
 
-	err = <-errCh
-	if err != nil {
+	if err := <-errCh; err != nil {
 		fmt.Println("Error:", err)
 	}
 
-	err = <-errCh
-	if err != nil {
+	if err := <-errCh; err != nil {
 		fmt.Println("Error:", err)
 	}
 }
