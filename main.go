@@ -78,6 +78,12 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 }
 
 func dial(address string) (net.Conn, error) {
+	// Check if the address is IPv6
+	if strings.Contains(address, "[") && strings.Contains(address, "]") {
+		return net.Dial("tcp", address)
+	}
+
+	// Handle IPv4 address
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, fmt.Errorf("invalid address %s: %v", address, err)
