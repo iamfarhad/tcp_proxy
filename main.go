@@ -7,14 +7,13 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	_ "net/http/pprof" // Import for side-effect to register pprof handlers
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-
-
-	"github.com/valyala/fasthttp"
 )
 
 var bufferPool = sync.Pool{
@@ -28,7 +27,6 @@ type Forwarder struct {
 	ListenPort int
 }
 
-// Start begins listening on the forwarder's configured port and forwards connections.
 func (f *Forwarder) Start(ctx context.Context, destinationHost string, bufferSize int, workerPool chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -64,7 +62,6 @@ func (f *Forwarder) Start(ctx context.Context, destinationHost string, bufferSiz
 	}
 }
 
-// handleConnection forwards a single connection to the destination host and port.
 func (f *Forwarder) handleConnection(ctx context.Context, src net.Conn, targetAddr string, bufferSize int, workerPool chan struct{}) {
 	defer src.Close()
 	defer func() { <-workerPool }()
@@ -83,7 +80,6 @@ func (f *Forwarder) handleConnection(ctx context.Context, src net.Conn, targetAd
 	}
 }
 
-// copyData handles the actual data transfer between the source and destination.
 func (f *Forwarder) copyData(ctx context.Context, src, dst net.Conn, bufferSize int) error {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
@@ -124,6 +120,7 @@ func main() {
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
 	bufferSize := flag.Int("buffer-size", 64*1024, "Buffer size for TCP connections")
 	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
+	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
 
 	logFile, err := os.OpenFile("forwarder.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -150,19 +147,13 @@ func main() {
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	// Profiling server
+	// Start pprof HTTP server for profiling
 	go func() {
-		log.Println(fasthttp.ListenAndServe(":6060", pprofHandler))
+		log.Printf("Starting pprof HTTP server on :%s", *pprofPort)
+		if err := http.ListenAndServe(fmt.Sprintf(":%s", *pprofPort), nil); err != nil {
+			log.Fatalf("Failed to start pprof HTTP server: %v", err)
+		}
 	}()
 
 	wg.Wait()
-}
-
-func pprofHandler(ctx *fasthttp.RequestCtx) {
-	switch string(ctx.Path()) {
-	case "/debug/pprof/":
-		ctx.Redirect("/debug/pprof/", fasthttp.StatusMovedPermanently)
-	default:
-		ctx.Error("Unsupported path", fasthttp.StatusNotFound)
-	}
 }
