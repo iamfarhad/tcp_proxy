@@ -17,7 +17,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 256*1024) // Increased buffer size for better throughput
+		return make([]byte, 1024*1024) // Increased buffer size for better throughput
 	},
 }
 
@@ -119,7 +119,7 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 256*1024, "Buffer size for TCP connections") // Increased buffer size
+	bufferSize := flag.Int("buffer-size", 1024*1024, "Buffer size for TCP connections") // Increased buffer size
 	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
