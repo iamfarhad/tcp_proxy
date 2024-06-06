@@ -59,7 +59,7 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	defer src.Close()
 	defer func() { <-workerPool }()
 
-	dst, err := net.Dial("tcp", targetAddr)
+	dst, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
 	if err != nil {
 		log.Printf("Failed to connect to target %s: %v", targetAddr, err)
 		return
@@ -173,7 +173,9 @@ func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) {
 	defer bufferPool.Put(buf)
 	_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
 	if err != nil && err != io.EOF {
-		log.Printf("Error copying data: %v", err)
+		if !strings.Contains(err.Error(), "use of closed network connection") {
+			log.Printf("Error copying data: %v", err)
+		}
 	}
 }
 
