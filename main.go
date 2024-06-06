@@ -85,7 +85,7 @@ func handleConnection(conn net.Conn) {
 			break
 		}
 		if n > 0 {
-			log.Printf("Read %d bytes from %s", n, conn.RemoteAddr())
+			log.Printf("Read %d bytes from %s: %s", n, conn.RemoteAddr(), string(buf[:n]))
 			m, err := conn.Write(buf[:n])
 			if err != nil {
 				log.Printf("Error writing to %s: %v", conn.RemoteAddr(), err)
@@ -129,7 +129,7 @@ func copyData(wg *sync.WaitGroup, dst net.Conn, src net.Conn, direction string) 
 			break
 		}
 		if n > 0 {
-			log.Printf("Read %d bytes from %s during %s", n, src.RemoteAddr(), direction)
+			log.Printf("Read %d bytes from %s during %s: %s", n, src.RemoteAddr(), direction, string(buf[:n]))
 			m, err := dst.Write(buf[:n])
 			if err != nil {
 				log.Printf("Error writing to %s during %s: %v", dst.RemoteAddr(), direction, err)
