@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 )
 
 var bufferPool = sync.Pool{
@@ -25,7 +24,7 @@ type Forwarder struct {
 	ListenPort int
 }
 
-func (f *Forwarder) Start(destinationHost string, bufferSize int, workerPool chan struct{}, wg *sync.WaitGroup) {
+func (f *Forwarder) StartTCP(destinationHost string, bufferSize int, workerPool chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	listenAddr := fmt.Sprintf(":%d", f.ListenPort)
@@ -36,7 +35,7 @@ func (f *Forwarder) Start(destinationHost string, bufferSize int, workerPool cha
 	defer listener.Close()
 
 	targetAddr := fmt.Sprintf("%s:%d", destinationHost, f.ListenPort)
-	log.Printf("Listening on %s and forwarding to %s", listenAddr, targetAddr)
+	log.Printf("TCP: Listening on %s and forwarding to %s", listenAddr, targetAddr)
 
 	for {
 		conn, err := listener.Accept()
@@ -47,7 +46,7 @@ func (f *Forwarder) Start(destinationHost string, bufferSize int, workerPool cha
 
 		select {
 		case workerPool <- struct{}{}:
-			go f.handleConnection(conn, targetAddr, bufferSize, workerPool)
+			go f.handleTCPConnection(conn, targetAddr, bufferSize, workerPool)
 		default:
 			log.Printf("Worker pool full, dropping connection from %s", conn.RemoteAddr().String())
 			conn.Close()
@@ -55,11 +54,11 @@ func (f *Forwarder) Start(destinationHost string, bufferSize int, workerPool cha
 	}
 }
 
-func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize int, workerPool chan struct{}) {
+func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferSize int, workerPool chan struct{}) {
 	defer src.Close()
 	defer func() { <-workerPool }()
 
-	dst, err := dial(targetAddr)
+	dst, err := dialTCP(targetAddr)
 	if err != nil {
 		log.Printf("Failed to connect to target %s: %v", targetAddr, err)
 		return
@@ -77,40 +76,8 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 	}
 }
 
-func dial(address string) (net.Conn, error) {
-	// Check if the address is IPv6
-	if strings.Contains(address, "[") && strings.Contains(address, "]") {
-		return net.Dial("tcp", address)
-	}
-
-	// Handle IPv4 address
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, fmt.Errorf("invalid address %s: %v", address, err)
-	}
-	portInt, err := strconv.Atoi(port)
-	if err != nil {
-		return nil, fmt.Errorf("invalid port %s: %v", port, err)
-	}
-
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return nil, fmt.Errorf("failed to lookup IP for host %s: %v", host, err)
-	}
-
-	var conn net.Conn
-	for _, ip := range ips {
-		addr := &net.TCPAddr{
-			IP:   ip,
-			Port: portInt,
-		}
-		conn, err = net.DialTCP("tcp", nil, addr)
-		if err == nil {
-			return conn, nil
-		}
-	}
-
-	return nil, fmt.Errorf("failed to connect to any resolved address for %s", address)
+func dialTCP(address string) (net.Conn, error) {
+	return net.Dial("tcp", address)
 }
 
 func setTCPOptions(conn net.Conn) {
@@ -127,19 +94,73 @@ func setTCPOptions(conn net.Conn) {
 		if err := tcpConn.SetWriteBuffer(512 * 1024); err != nil {
 			log.Printf("Failed to set SO_SNDBUF: %v", err)
 		}
+	}
+}
 
-		// Set additional TCP options
-		fd, err := tcpConn.File()
+func (f *Forwarder) StartUDP(destinationHost string, bufferSize int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	listenAddr := fmt.Sprintf(":%d", f.ListenPort)
+	udpAddr, err := net.ResolveUDPAddr("udp", listenAddr)
+	if err != nil {
+		log.Fatalf("Failed to resolve UDP address %s: %v", listenAddr, err)
+	}
+
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		log.Fatalf("Failed to listen on UDP %s: %v", listenAddr, err)
+	}
+	defer conn.Close()
+
+	targetAddr := fmt.Sprintf("%s:%d", destinationHost, f.ListenPort)
+	targetUDPAddr, err := net.ResolveUDPAddr("udp", targetAddr)
+	if err != nil {
+		log.Fatalf("Failed to resolve target UDP address %s: %v", targetAddr, err)
+	}
+
+	log.Printf("UDP: Listening on %s and forwarding to %s", listenAddr, targetAddr)
+
+	buf := make([]byte, bufferSize)
+	for {
+		n, srcAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Printf("Failed to get file descriptor: %v", err)
-			return
+			log.Printf("Failed to read from UDP: %v", err)
+			continue
 		}
-		defer fd.Close()
 
-		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_TCP, syscall.TCP_QUICKACK, 1)
-		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_TCP, syscall.TCP_WINDOW_CLAMP, 128*1024)
-		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_TCP, syscall.TCP_MAXSEG, 1460)
+		go f.handleUDPConnection(conn, srcAddr, targetUDPAddr, buf[:n])
+	}
+}
 
+func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAddr, targetAddr *net.UDPAddr, data []byte) {
+	// Forward to the destination
+	targetConn, err := net.DialUDP("udp", nil, targetAddr)
+	if err != nil {
+		log.Printf("Failed to connect to target UDP %s: %v", targetAddr, err)
+		return
+	}
+	defer targetConn.Close()
+
+	_, err = targetConn.Write(data)
+	if err != nil {
+		log.Printf("Failed to write to target UDP %s: %v", targetAddr, err)
+		return
+	}
+
+	// Read response
+	buf := bufferPool.Get().([]byte)
+	defer bufferPool.Put(buf)
+
+	n, _, err := targetConn.ReadFromUDP(buf)
+	if err != nil {
+		log.Printf("Failed to read from target UDP %s: %v", targetAddr, err)
+		return
+	}
+
+	// Send response back to the source
+	_, err = srcConn.WriteToUDP(buf[:n], srcAddr)
+	if err != nil {
+		log.Printf("Failed to write to source UDP %s: %v", srcAddr, err)
 	}
 }
 
@@ -199,7 +220,9 @@ func main() {
 		}
 
 		wg.Add(1)
-		go (&Forwarder{ListenPort: port}).Start(*destinationHost, *bufferSize, workerPool, &wg)
+		go (&Forwarder{ListenPort: port}).StartTCP(*destinationHost, *bufferSize, workerPool, &wg)
+		wg.Add(1)
+		go (&Forwarder{ListenPort: port}).StartUDP(*destinationHost, *bufferSize, &wg)
 	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
