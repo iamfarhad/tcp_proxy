@@ -24,6 +24,14 @@ func handleConnection(localConn net.Conn, relayHost, relayPort string) {
     }
     defer relayConn.Close()
 
+    // Send destination address first
+    destAddr := localConn.RemoteAddr().String()
+    _, err = relayConn.Write([]byte(destAddr + "\n"))
+    if err != nil {
+        log.Printf("Failed to send destination address: %v", err)
+        return
+    }
+
     var wg sync.WaitGroup
     wg.Add(2)
 
@@ -74,6 +82,7 @@ func handleRelayConnection(localConn net.Conn) {
     }
 
     destAddr := string(buf[:n])
+    destAddr = destAddr[:len(destAddr)-1] // Remove newline character
     log.Printf("Connecting to destination: %s", destAddr)
 
     remoteConn, err := net.Dial("tcp", destAddr)
