@@ -6,12 +6,11 @@ import (
 	"io"
 	"log"
 	"net"
-
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-
 )
 
 var bufferPool = sync.Pool{
@@ -26,7 +25,7 @@ type Forwarder struct {
 }
 
 // Start begins listening on the forwarder's configured port and forwards connections.
-func (f *Forwarder) Start(destinationHost string, wg *sync.WaitGroup) {
+func (f *Forwarder) Start(destinationHost string, bufferSize int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	listenAddr := fmt.Sprintf(":%d", f.ListenPort)
@@ -52,28 +51,26 @@ func (f *Forwarder) Start(destinationHost string, wg *sync.WaitGroup) {
 			continue
 		}
 
-		// Set TCP_NODELAY to true to disable Nagle's algorithm for this connection.
 		if err := tcpConn.SetNoDelay(true); err != nil {
 			log.Printf("Failed to set TCP_NODELAY: %v", err)
 			continue
 		}
 
-		// Set the TCP window size.
-		if err := tcpConn.SetWriteBuffer(32 * 1024); err != nil {
+		if err := tcpConn.SetWriteBuffer(bufferSize); err != nil {
 			log.Printf("Failed to set write buffer size: %v", err)
 			continue
 		}
-		if err := tcpConn.SetReadBuffer(32 * 1024); err != nil {
+		if err := tcpConn.SetReadBuffer(bufferSize); err != nil {
 			log.Printf("Failed to set read buffer size: %v", err)
 			continue
 		}
 
-		go f.handleConnection(tcpConn, targetAddr)
+		go f.handleConnection(tcpConn, targetAddr, bufferSize)
 	}
 }
 
 // handleConnection forwards a single connection to the destination host and port.
-func (f *Forwarder) handleConnection(src *net.TCPConn, targetAddr string) {
+func (f *Forwarder) handleConnection(src *net.TCPConn, targetAddr string, bufferSize int) {
 	defer src.Close()
 
 	dst, err := net.Dial("tcp", targetAddr)
@@ -89,37 +86,35 @@ func (f *Forwarder) handleConnection(src *net.TCPConn, targetAddr string) {
 		return
 	}
 
-	// Set TCP_NODELAY to true to disable Nagle's algorithm for this connection.
 	if err := dstTcpConn.SetNoDelay(true); err != nil {
 		log.Printf("Failed to set TCP_NODELAY: %v", err)
 		return
 	}
 
-	// Set the TCP window size.
-	if err := dstTcpConn.SetWriteBuffer(32 * 1024); err != nil {
+	if err := dstTcpConn.SetWriteBuffer(bufferSize); err != nil {
 		log.Printf("Failed to set write buffer size: %v", err)
 		return
 	}
-	if err := dstTcpConn.SetReadBuffer(32 * 1024); err != nil {
+	if err := dstTcpConn.SetReadBuffer(bufferSize); err != nil {
 		log.Printf("Failed to set read buffer size: %v", err)
 		return
 	}
 
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
-	go copyData(src, dstTcpConn, wg)
-	go copyData(dstTcpConn, src, wg)
+	go copyData(src, dstTcpConn, wg, bufferSize)
+	go copyData(dstTcpConn, src, wg, bufferSize)
 	wg.Wait()
 }
 
 // copyData handles the actual data transfer between the source and destination.
-func copyData(src, dst *net.TCPConn, wg *sync.WaitGroup) {
+func copyData(src, dst *net.TCPConn, wg *sync.WaitGroup, bufferSize int) {
 	defer wg.Done()
 
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 
-	_, err := io.CopyBuffer(dst, src, buf)
+	_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
 	if err != nil {
 		log.Printf("Data transfer error: %v", err)
 	}
@@ -128,10 +123,17 @@ func copyData(src, dst *net.TCPConn, wg *sync.WaitGroup) {
 func main() {
 	var wg sync.WaitGroup
 
-	// Command-line flags
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
+	bufferSize := flag.Int("buffer-size", 32*1024, "Buffer size for TCP connections")
 	flag.Parse()
+
+	logFile, err := os.OpenFile("forwarder.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
 
 	ports := strings.Split(*listenPorts, ",")
 	for _, portStr := range ports {
@@ -141,10 +143,9 @@ func main() {
 		}
 
 		wg.Add(1)
-		go (&Forwarder{ListenPort: port}).Start(*destinationHost, &wg)
+		go (&Forwarder{ListenPort: port}).Start(*destinationHost, *bufferSize, &wg)
 	}
 
-	// Set GOMAXPROCS to the number of cores available
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	wg.Wait()
