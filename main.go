@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
 )
 
 var bufferPool = sync.Pool{
@@ -44,12 +45,34 @@ func (f *Forwarder) Start(destinationHost string, wg *sync.WaitGroup) {
 			continue
 		}
 
-		go f.handleConnection(conn, targetAddr)
+		tcpConn, ok := conn.(*net.TCPConn)
+		if !ok {
+			log.Printf("Failed to cast to TCPConn: %v", err)
+			continue
+		}
+
+		// Set TCP_NODELAY to true to disable Nagle's algorithm for this connection.
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			log.Printf("Failed to set TCP_NODELAY: %v", err)
+			continue
+		}
+
+		// Set the TCP window size.
+		if err := tcpConn.SetWriteBuffer(128 * 1024); err != nil {
+			log.Printf("Failed to set write buffer size: %v", err)
+			continue
+		}
+		if err := tcpConn.SetReadBuffer(128 * 1024); err != nil {
+			log.Printf("Failed to set read buffer size: %v", err)
+			continue
+		}
+
+		go f.handleConnection(tcpConn, targetAddr)
 	}
 }
 
 // handleConnection forwards a single connection to the destination host and port.
-func (f *Forwarder) handleConnection(src net.Conn, targetAddr string) {
+func (f *Forwarder) handleConnection(src *net.TCPConn, targetAddr string) {
 	defer src.Close()
 
 	dst, err := net.Dial("tcp", targetAddr)
@@ -59,15 +82,37 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string) {
 	}
 	defer dst.Close()
 
+	dstTcpConn, ok := dst.(*net.TCPConn)
+	if !ok {
+		log.Printf("Failed to cast to TCPConn: %v", err)
+		return
+	}
+
+	// Set TCP_NODELAY to true to disable Nagle's algorithm for this connection.
+	if err := dstTcpConn.SetNoDelay(true); err != nil {
+		log.Printf("Failed to set TCP_NODELAY: %v", err)
+		return
+	}
+
+	// Set the TCP window size.
+	if err := dstTcpConn.SetWriteBuffer(128 * 1024); err != nil {
+		log.Printf("Failed to set write buffer size: %v", err)
+		return
+	}
+	if err := dstTcpConn.SetReadBuffer(128 * 1024); err != nil {
+		log.Printf("Failed to set read buffer size: %v", err)
+		return
+	}
+
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
-	go copyData(src, dst, wg)
-	go copyData(dst, src, wg)
+	go copyData(src, dstTcpConn, wg)
+	go copyData(dstTcpConn, src, wg)
 	wg.Wait()
 }
 
 // copyData handles the actual data transfer between the source and destination.
-func copyData(src, dst net.Conn, wg *sync.WaitGroup) {
+func copyData(src, dst *net.TCPConn, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	buf := bufferPool.Get().([]byte)
