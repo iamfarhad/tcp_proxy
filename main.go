@@ -91,14 +91,27 @@ func relayConnection(conn net.Conn, serverAddress string) {
 	defer serverConn.Close()
 
 	log.Printf("Relaying data between client %s and server %s", conn.RemoteAddr(), serverConn.RemoteAddr())
+
+	done := make(chan error, 1)
+
 	go func() {
 		_, err := io.Copy(serverConn, conn)
 		if err != nil {
 			log.Printf("Error relaying data from client %s to server %s: %v", conn.RemoteAddr(), serverConn.RemoteAddr(), err)
 		}
+		done <- err
 	}()
-	_, err = io.Copy(conn, serverConn)
+
+	go func() {
+		_, err := io.Copy(conn, serverConn)
+		if err != nil {
+			log.Printf("Error relaying data from server %s to client %s: %v", serverConn.RemoteAddr(), conn.RemoteAddr(), err)
+		}
+		done <- err
+	}()
+
+	err = <-done
 	if err != nil {
-		log.Printf("Error relaying data from server %s to client %s: %v", serverConn.RemoteAddr(), conn.RemoteAddr(), err)
+		log.Printf("Relay error: %v", err)
 	}
 }
