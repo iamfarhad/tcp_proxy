@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+
 	"runtime"
 	"strconv"
 	"strings"
@@ -15,7 +16,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 128*1024) // Adjust buffer size as needed
+		return make([]byte, 32*1024) // Adjust buffer size as needed
 	},
 }
 
@@ -58,11 +59,11 @@ func (f *Forwarder) Start(destinationHost string, wg *sync.WaitGroup) {
 		}
 
 		// Set the TCP window size.
-		if err := tcpConn.SetWriteBuffer(128 * 1024); err != nil {
+		if err := tcpConn.SetWriteBuffer(32 * 1024); err != nil {
 			log.Printf("Failed to set write buffer size: %v", err)
 			continue
 		}
-		if err := tcpConn.SetReadBuffer(128 * 1024); err != nil {
+		if err := tcpConn.SetReadBuffer(32 * 1024); err != nil {
 			log.Printf("Failed to set read buffer size: %v", err)
 			continue
 		}
@@ -95,11 +96,11 @@ func (f *Forwarder) handleConnection(src *net.TCPConn, targetAddr string) {
 	}
 
 	// Set the TCP window size.
-	if err := dstTcpConn.SetWriteBuffer(128 * 1024); err != nil {
+	if err := dstTcpConn.SetWriteBuffer(32 * 1024); err != nil {
 		log.Printf("Failed to set write buffer size: %v", err)
 		return
 	}
-	if err := dstTcpConn.SetReadBuffer(128 * 1024); err != nil {
+	if err := dstTcpConn.SetReadBuffer(32 * 1024); err != nil {
 		log.Printf("Failed to set read buffer size: %v", err)
 		return
 	}
