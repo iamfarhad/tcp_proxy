@@ -6,10 +6,17 @@ import (
 	"io"
 	"log"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 )
+
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 128*1024) // Adjust buffer size as needed
+	},
+}
 
 // Forwarder sets up a listening port and forwards data to the same port on the destination host.
 type Forwarder struct {
@@ -63,7 +70,10 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string) {
 func copyData(src, dst net.Conn, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	_, err := io.Copy(dst, src)
+	buf := bufferPool.Get().([]byte)
+	defer bufferPool.Put(buf)
+
+	_, err := io.CopyBuffer(dst, src, buf)
 	if err != nil {
 		log.Printf("Data transfer error: %v", err)
 	}
@@ -87,6 +97,9 @@ func main() {
 		wg.Add(1)
 		go (&Forwarder{ListenPort: port}).Start(*destinationHost, &wg)
 	}
+
+	// Set GOMAXPROCS to the number of cores available
+	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	wg.Wait()
 }
