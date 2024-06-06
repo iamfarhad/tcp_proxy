@@ -17,31 +17,45 @@ const (
 // handleClient manages connections based on the provided target address
 func handleClient(client net.Conn, targetAddr string) {
 	defer client.Close()
-
-	serverConn, err := net.Dial("tcp", targetAddr)
-	if err != nil {
-		log.Printf("Failed to connect to %s: %v", targetAddr, err)
-		return
-	}
-	defer serverConn.Close()
-
-	log.Printf("Established connection from %s to %s", client.RemoteAddr(), targetAddr)
-
-	// Transfer data between client and server
-	go func() {
-		_, err := io.CopyBuffer(serverConn, client, make([]byte, BufferSize))
+	if targetAddr != "" {
+		serverConn, err := net.Dial("tcp", targetAddr)
 		if err != nil {
-			log.Printf("Error while copying data from client to server: %v", err)
+			log.Printf("Failed to connect to %s: %v", targetAddr, err)
+			return
 		}
-		serverConn.Close()
+		defer serverConn.Close()
+
+		log.Printf("Established connection from %s to %s", client.RemoteAddr(), targetAddr)
+
+		// Transfer data between client and server
+		go func() {
+			_, err := io.CopyBuffer(serverConn, client, make([]byte, BufferSize))
+			if err != nil {
+				log.Printf("Error while copying data from client to server: %v", err)
+			}
+			serverConn.Close()
+			client.Close()
+		}()
+		_, err = io.CopyBuffer(client, serverConn, make([]byte, BufferSize))
+		if err != nil {
+			log.Printf("Error while copying data from server to client: %v", err)
+		}
 		client.Close()
-	}()
-	_, err = io.CopyBuffer(client, serverConn, make([]byte, BufferSize))
-	if err != nil {
-		log.Printf("Error while copying data from server to client: %v", err)
+		serverConn.Close()
+	} else {
+		log.Println("Handling connection without forwarding.")
+		buf := make([]byte, BufferSize)
+		for {
+			n, err := client.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("Error reading from client: %v", err)
+				}
+				break
+			}
+			log.Printf("Received %d bytes: %x", n, buf[:n]) // نمایش داده‌ها به صورت هگزادسیمال
+		}
 	}
-	client.Close()
-	serverConn.Close()
 }
 
 // startServer starts a server on the specified address
@@ -51,7 +65,10 @@ func startServer(listenAddr, targetAddr string) {
 		log.Fatalf("Failed to listen on %s: %v", listenAddr, err)
 	}
 	defer listener.Close()
-	log.Printf("Server listening on %s and forwarding to %s", listenAddr, targetAddr)
+	log.Printf("Server listening on %s", listenAddr)
+	if targetAddr != "" {
+		log.Printf(" and forwarding to %s", targetAddr)
+	}
 
 	for {
 		conn, err := listener.Accept()
@@ -82,7 +99,7 @@ func main() {
 		if serverAddress == "" {
 			log.Fatal("Please provide server-address for server mode")
 		}
-		startServer(serverAddress, destination)
+		startServer(serverAddress, "")
 	default:
 		log.Fatalf("Invalid mode: %s. Please specify 'client' or 'server'", mode)
 	}
