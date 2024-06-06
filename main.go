@@ -17,7 +17,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 2048*1024) // Optimal buffer size for high throughput
+		return make([]byte, 2048*1024*10248) // Optimal buffer size for high throughput
 	},
 }
 
@@ -70,10 +70,13 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	setTCPOptions(src)
 	setTCPOptions(dst)
 
-	// Data copying in a single direction at a time
-	errChan := make(chan error, 2)
-	go f.copyData(src, dst, bufferSize, errChan)
-	go f.copyData(dst, src, bufferSize, errChan)
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- f.copyData(src, dst, bufferSize)
+	}()
+	go func() {
+		errChan <- f.copyData(dst, src, bufferSize)
+	}()
 
 	err = <-errChan
 	if err != nil && err != io.EOF {
@@ -174,11 +177,16 @@ func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAd
 	}
 }
 
-func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int, errChan chan error) {
+func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 	_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
-	errChan <- err
+	if err != nil && err != io.EOF {
+		if !strings.Contains(err.Error(), "use of closed network connection") {
+			log.Printf("Error copying data: %v", err)
+		}
+	}
+	return err
 }
 
 func main() {
@@ -186,8 +194,8 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 2048*1024, "Buffer size for TCP connections") // Adjusted buffer size
-	workerCount := flag.Int("workers", 5000, "Number of concurrent workers") // Increased worker pool size
+	bufferSize := flag.Int("buffer-size", 2048*1024*10248, "Buffer size for TCP connections") // Adjusted buffer size
+	workerCount := flag.Int("workers", 10000, "Number of concurrent workers") // Increased worker pool size
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
 
