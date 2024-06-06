@@ -2,6 +2,7 @@ package main
 
 import (
     "bufio"
+    "errors"
     "flag"
     "io"
     "log"
@@ -11,15 +12,26 @@ import (
 )
 
 type PortForwarder struct {
-    LocalPort string
-    RelayHost string
-    RelayPort string
+    LocalPort   string
+    RelayHost   string
+    RelayPort   string
+    Destination string
 }
 
-func handleConnection(localConn net.Conn, relayHost, relayPort string) {
+func parseDestination(destination string) (string, string, error) {
+    parts := strings.Split(destination, ":")
+    if len(parts) != 4 {
+        return "", "", errors.New("invalid destination format, expected format: <relayHost>:<relayPort>:<destHost>:<destPort>")
+    }
+    relayHostPort := net.JoinHostPort(parts[0], parts[1])
+    destHostPort := net.JoinHostPort(parts[2], parts[3])
+    return relayHostPort, destHostPort, nil
+}
+
+func handleConnection(localConn net.Conn, relayHostPort, destHostPort string) {
     defer localConn.Close()
 
-    relayConn, err := net.Dial("tcp", net.JoinHostPort(relayHost, relayPort))
+    relayConn, err := net.Dial("tcp", relayHostPort)
     if err != nil {
         log.Printf("Failed to connect to relay host: %v", err)
         return
@@ -27,8 +39,7 @@ func handleConnection(localConn net.Conn, relayHost, relayPort string) {
     defer relayConn.Close()
 
     // Send destination address first
-    destAddr := localConn.RemoteAddr().String()
-    _, err = relayConn.Write([]byte(destAddr + "\n"))
+    _, err = relayConn.Write([]byte(destHostPort + "\n"))
     if err != nil {
         log.Printf("Failed to send destination address: %v", err)
         return
@@ -57,7 +68,7 @@ func startPortForwarder(forwarder PortForwarder) {
     }
     defer listener.Close()
 
-    log.Printf("Listening on port %s and forwarding to %s:%s", forwarder.LocalPort, forwarder.RelayHost, forwarder.RelayPort)
+    log.Printf("Listening on port %s and forwarding to %s via relay %s", forwarder.LocalPort, forwarder.Destination, net.JoinHostPort(forwarder.RelayHost, forwarder.RelayPort))
 
     for {
         conn, err := listener.Accept()
@@ -65,7 +76,7 @@ func startPortForwarder(forwarder PortForwarder) {
             log.Printf("Failed to accept connection: %v", err)
             continue
         }
-        go handleConnection(conn, forwarder.RelayHost, forwarder.RelayPort)
+        go handleConnection(conn, net.JoinHostPort(forwarder.RelayHost, forwarder.RelayPort), forwarder.Destination)
     }
 }
 
@@ -130,20 +141,25 @@ func startRelayServer(server RelayServer) {
 func main() {
     mode := flag.String("mode", "", "Mode to run: client or relay")
     localPort := flag.String("localPort", "", "Local port to listen on (for client mode)")
-    relayHost := flag.String("relayHost", "", "Relay host to forward to (for client mode)")
-    relayPort := flag.String("relayPort", "", "Relay port to forward to (for client mode)")
+    destination := flag.String("destination", "", "Combined relay host and destination in the format <relayHost>:<relayPort>:<destHost>:<destPort> (for client mode)")
     listenPort := flag.String("listenPort", "", "Relay listen port (for relay mode)")
 
     flag.Parse()
 
     if *mode == "client" {
-        if *localPort == "" || *relayHost == "" || *relayPort == "" {
-            log.Fatal("In client mode, localPort, relayHost, and relayPort must be specified")
+        if *localPort == "" || *destination == "" {
+            log.Fatal("In client mode, localPort and destination must be specified")
         }
+        relayHostPort, destHostPort, err := parseDestination(*destination)
+        if err != nil {
+            log.Fatal(err)
+        }
+        parts := strings.Split(relayHostPort, ":")
         forwarder := PortForwarder{
             LocalPort:  *localPort,
-            RelayHost:  *relayHost,
-            RelayPort:  *relayPort,
+            RelayHost:  parts[0],
+            RelayPort:  parts[1],
+            Destination: destHostPort,
         }
         startPortForwarder(forwarder)
     } else if *mode == "relay" {
