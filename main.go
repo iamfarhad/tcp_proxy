@@ -28,7 +28,6 @@ func handleClient(client net.Conn, targetAddr string) {
 		go io.CopyBuffer(serverConn, client, make([]byte, BufferSize))
 		io.CopyBuffer(client, serverConn, make([]byte, BufferSize))
 	} else {
-		// در اینجا می‌توانید منطق خود را برای پردازش اتصالات ورودی اضافه کنید
 		log.Println("Handling connection without forwarding.")
 		buf := make([]byte, BufferSize)
 		for {
@@ -39,7 +38,7 @@ func handleClient(client net.Conn, targetAddr string) {
 				}
 				break
 			}
-			log.Printf("Received %d bytes: %s", n, string(buf[:n]))
+			log.Printf("Received %d bytes: %x", n, buf[:n]) // نمایش داده‌ها به صورت هگزادسیمال
 		}
 	}
 }
