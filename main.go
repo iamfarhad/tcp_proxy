@@ -7,17 +7,17 @@ import (
 	"log"
 	"net"
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 1024*1024) // Increased buffer size for better throughput
+		return make([]byte, 256*1024) // Increased buffer size for better throughput
 	},
 }
 
@@ -66,22 +66,44 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 	}
 	defer dst.Close()
 
-	// Set TCP_NODELAY to reduce latency
-	if tcpConn, ok := src.(*net.TCPConn); ok {
-		if err := tcpConn.SetNoDelay(true); err != nil {
-			log.Printf("Failed to set TCP_NODELAY on src: %v", err)
-		}
-	}
-	if tcpConn, ok := dst.(*net.TCPConn); ok {
-		if err := tcpConn.SetNoDelay(true); err != nil {
-			log.Printf("Failed to set TCP_NODELAY on dst: %v", err)
-		}
-	}
+	// Set TCP options
+	setTCPOptions(src)
+	setTCPOptions(dst)
 
 	err = f.copyData(src, dst, bufferSize)
 	if err != nil {
 		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr().String(), targetAddr, err)
 		return
+	}
+}
+
+func setTCPOptions(conn net.Conn) {
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		// Disable Nagle's algorithm
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			log.Printf("Failed to set TCP_NODELAY: %v", err)
+		}
+
+		// Set send and receive buffer sizes
+		if err := tcpConn.SetReadBuffer(256 * 1024); err != nil {
+			log.Printf("Failed to set SO_RCVBUF: %v", err)
+		}
+		if err := tcpConn.SetWriteBuffer(256 * 1024); err != nil {
+			log.Printf("Failed to set SO_SNDBUF: %v", err)
+		}
+
+		// Set additional TCP options
+		fd, err := tcpConn.File()
+		if err != nil {
+			log.Printf("Failed to get file descriptor: %v", err)
+			return
+		}
+		defer fd.Close()
+
+		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_TCP, syscall.TCP_QUICKACK, 1)
+		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_TCP, syscall.TCP_WINDOW_CLAMP, 128*1024)
+		syscall.SetsockoptInt(int(fd.Fd()), syscall.IPPROTO_TCP, syscall.TCP_MAXSEG, 1460)
+
 	}
 }
 
@@ -119,7 +141,7 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 1024*1024, "Buffer size for TCP connections") // Increased buffer size
+	bufferSize := flag.Int("buffer-size", 256*1024, "Buffer size for TCP connections") // Increased buffer size
 	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
