@@ -6,70 +6,29 @@ import (
 	"io"
 	"log"
 	"net"
+	"strconv"
+	"strings"
+	"sync"
 )
 
-const (
-	ClientMode = "client"
-	ServerMode = "server"
-	BufferSize = 32 * 1024 // 32KB buffer size
-)
-
-// handleClient manages connections based on the provided target address
-func handleClient(client net.Conn, targetAddr string) {
-	defer client.Close()
-
-	if targetAddr != "" {
-		serverConn, err := net.Dial("tcp", targetAddr)
-		if err != nil {
-			log.Printf("Failed to connect to %s: %v", targetAddr, err)
-			return
-		}
-		defer serverConn.Close()
-
-		log.Printf("Established connection from %s to %s", client.RemoteAddr(), targetAddr)
-
-		go func() {
-			_, err := io.Copy(serverConn, client)
-			if err != nil {
-				log.Printf("Error while copying data from client to server: %v", err)
-			}
-		}()
-		_, err = io.Copy(client, serverConn)
-		if err != nil {
-			log.Printf("Error while copying data from server to client: %v", err)
-		}
-	} else {
-		log.Println("No target address provided, closing connection.")
-	}
+// Forwarder sets up a listening port and forwards data to the same port on the destination host.
+type Forwarder struct {
+	ListenPort int
 }
 
-// startClient starts a client that forwards connections to a target address
-func startClient(localAddr, targetAddr string) {
-	listener, err := net.Listen("tcp", localAddr)
-	if err != nil {
-		log.Fatalf("Failed to listen on %s: %v", localAddr, err)
-	}
-	defer listener.Close()
-	log.Printf("Client listening on %s and forwarding to %s", localAddr, targetAddr)
+// Start begins listening on the forwarder's configured port and forwards connections.
+func (f *Forwarder) Start(destinationHost string, wg *sync.WaitGroup) {
+	defer wg.Done()
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Failed to accept connection: %v", err)
-			continue
-		}
-		go handleClient(conn, targetAddr)
-	}
-}
-
-// startServer starts a server that only accepts connections
-func startServer(listenAddr string) {
+	listenAddr := fmt.Sprintf(":%d", f.ListenPort)
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on %s: %v", listenAddr, err)
 	}
 	defer listener.Close()
-	log.Printf("Server listening on %s", listenAddr)
+
+	targetAddr := fmt.Sprintf("%s:%d", destinationHost, f.ListenPort)
+	log.Printf("Listening on %s and forwarding to %s", listenAddr, targetAddr)
 
 	for {
 		conn, err := listener.Accept()
@@ -77,33 +36,57 @@ func startServer(listenAddr string) {
 			log.Printf("Failed to accept connection: %v", err)
 			continue
 		}
-		log.Printf("Accepted connection from %s", conn.RemoteAddr())
-		// Simply close the connection after accepting
-		conn.Close()
+
+		go f.handleConnection(conn, targetAddr)
+	}
+}
+
+// handleConnection forwards a single connection to the destination host and port.
+func (f *Forwarder) handleConnection(src net.Conn, targetAddr string) {
+	defer src.Close()
+
+	dst, err := net.Dial("tcp", targetAddr)
+	if err != nil {
+		log.Printf("Failed to connect to target %s: %v", targetAddr, err)
+		return
+	}
+	defer dst.Close()
+
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	go copyData(src, dst, wg)
+	go copyData(dst, src, wg)
+	wg.Wait()
+}
+
+// copyData handles the actual data transfer between the source and destination.
+func copyData(src, dst net.Conn, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	_, err := io.Copy(dst, src)
+	if err != nil {
+		log.Printf("Data transfer error: %v", err)
 	}
 }
 
 func main() {
-	var mode, localPort, destination, serverAddress string
-	flag.StringVar(&mode, "mode", ClientMode, "Mode of operation (client or server)")
-	flag.StringVar(&localPort, "localPort", "", "Local port to listen on for client mode")
-	flag.StringVar(&destination, "destination", "", "Destination address for client mode (host:port)")
-	flag.StringVar(&serverAddress, "server-address", "", "Server address to listen on for server mode")
+	var wg sync.WaitGroup
+
+	// Command-line flags
+	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
+	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
 	flag.Parse()
 
-	switch mode {
-	case ClientMode:
-		if localPort == "" || destination == "" {
-			log.Fatal("Please provide localPort and destination for client mode")
+	ports := strings.Split(*listenPorts, ",")
+	for _, portStr := range ports {
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			log.Fatalf("Invalid port number: %v", err)
 		}
-		localAddr := fmt.Sprintf(":%s", localPort)
-		startClient(localAddr, destination)
-	case ServerMode:
-		if serverAddress == "" {
-			log.Fatal("Please provide server-address for server mode")
-		}
-		startServer(serverAddress)
-	default:
-		log.Fatalf("Invalid mode: %s. Please specify 'client' or 'server'", mode)
+
+		wg.Add(1)
+		go (&Forwarder{ListenPort: port}).Start(*destinationHost, &wg)
 	}
+
+	wg.Wait()
 }
