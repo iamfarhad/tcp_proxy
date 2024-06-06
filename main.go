@@ -70,9 +70,15 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	setTCPOptions(src)
 	setTCPOptions(dst)
 
-	// Use two goroutines to handle data transfer in both directions concurrently
-	go f.copyData(src, dst, bufferSize)
-	go f.copyData(dst, src, bufferSize)
+	// Data copying in a single direction at a time
+	errChan := make(chan error, 2)
+	go f.copyData(src, dst, bufferSize, errChan)
+	go f.copyData(dst, src, bufferSize, errChan)
+
+	err = <-errChan
+	if err != nil && err != io.EOF {
+		log.Printf("Error during data copy: %v", err)
+	}
 }
 
 func setTCPOptions(conn net.Conn) {
@@ -168,15 +174,11 @@ func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAd
 	}
 }
 
-func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) {
+func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int, errChan chan error) {
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 	_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
-	if err != nil && err != io.EOF {
-		if !strings.Contains(err.Error(), "use of closed network connection") {
-			log.Printf("Error copying data: %v", err)
-		}
-	}
+	errChan <- err
 }
 
 func main() {
@@ -185,7 +187,7 @@ func main() {
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
 	bufferSize := flag.Int("buffer-size", 2048*1024, "Buffer size for TCP connections") // Adjusted buffer size
-	workerCount := flag.Int("workers", 500, "Number of concurrent workers") // Increased worker pool size
+	workerCount := flag.Int("workers", 5000, "Number of concurrent workers") // Increased worker pool size
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
 
