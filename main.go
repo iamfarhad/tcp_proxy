@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-
+	"github.com/xtaci/smux"
 )
 
 var bufferPool = sync.Pool{
@@ -68,19 +68,21 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 	}
 	defer dst.Close()
 
-	// Set TCP_NODELAY to reduce latency
-	if tcpConn, ok := src.(*net.TCPConn); ok {
-		if err := tcpConn.SetNoDelay(true); err != nil {
-			log.Printf("Failed to set TCP_NODELAY: %v", err)
-		}
+	session, err := smux.Client(dst, nil)
+	if err != nil {
+		log.Printf("Failed to create smux session: %v", err)
+		return
 	}
-	if tcpConn, ok := dst.(*net.TCPConn); ok {
-		if err := tcpConn.SetNoDelay(true); err != nil {
-			log.Printf("Failed to set TCP_NODELAY: %v", err)
-		}
-	}
+	defer session.Close()
 
-	err = f.copyData(src, dst, bufferSize)
+	stream, err := session.OpenStream()
+	if err != nil {
+		log.Printf("Failed to open smux stream: %v", err)
+		return
+	}
+	defer stream.Close()
+
+	err = f.copyData(src, stream, bufferSize)
 	if err != nil {
 		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr().String(), targetAddr, err)
 		return
