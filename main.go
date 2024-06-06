@@ -11,29 +11,28 @@ import (
 const (
 	ClientMode = "client"
 	ServerMode = "server"
-	BufferSize = 128 * 1024 // 32KB buffer size
+	BufferSize = 32 * 1024 // 32KB buffer size
 )
 
-func handleClient(client net.Conn, serverAddr string) {
+// handleClient manages connections based on the provided target address
+func handleClient(client net.Conn, targetAddr string) {
 	defer client.Close()
-
-	// Establish a connection to the server if a server address is provided
-	if serverAddr != "" {
-		serverConn, err := net.Dial("tcp", serverAddr)
+	if targetAddr != "" {
+		serverConn, err := net.Dial("tcp", targetAddr)
 		if err != nil {
-			log.Printf("Failed to connect to server %s: %v\n", serverAddr, err)
+			log.Printf("Failed to connect to %s: %v", targetAddr, err)
 			return
 		}
 		defer serverConn.Close()
 
-		// Transfer data concurrently in both directions
 		go io.CopyBuffer(serverConn, client, make([]byte, BufferSize))
 		io.CopyBuffer(client, serverConn, make([]byte, BufferSize))
 	} else {
-		log.Println("No destination address provided for server mode, handling local connections only.")
+		log.Println("Handling connection without forwarding.")
 	}
 }
 
+// startServer starts a server on the specified address
 func startServer(listenAddr, targetAddr string) {
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -41,18 +40,13 @@ func startServer(listenAddr, targetAddr string) {
 	}
 	defer listener.Close()
 	log.Printf("Server listening on %s", listenAddr)
-	if targetAddr != "" {
-		log.Printf(" and forwarding to %s", targetAddr)
-	}
-	log.Println()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("Failed to accept connection: %v\n", err)
+			log.Printf("Failed to accept connection: %v", err)
 			continue
 		}
-		log.Printf("Accepted connection from %s", conn.RemoteAddr())
 		go handleClient(conn, targetAddr)
 	}
 }
@@ -62,7 +56,7 @@ func main() {
 	flag.StringVar(&mode, "mode", ClientMode, "Mode of operation (client or server)")
 	flag.StringVar(&localPort, "localPort", "", "Local port to listen on")
 	flag.StringVar(&destination, "destination", "", "Destination address for client mode (host:port)")
-	flag.StringVar(&serverAddress, "server-address", "", "Server address to listen on for server gettingMode")
+	flag.StringVar(&serverAddress, "server-address", "", "Server address to listen on for server mode")
 	flag.Parse()
 
 	switch mode {
