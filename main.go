@@ -17,7 +17,7 @@ import (
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 64*1024)
+		return make([]byte, 512*1024) // Increased buffer size for better throughput
 	},
 }
 
@@ -69,12 +69,12 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 	// Set TCP_NODELAY to reduce latency
 	if tcpConn, ok := src.(*net.TCPConn); ok {
 		if err := tcpConn.SetNoDelay(true); err != nil {
-			log.Printf("Failed to set TCP_NODELAY: %v", err)
+			log.Printf("Failed to set TCP_NODELAY on src: %v", err)
 		}
 	}
 	if tcpConn, ok := dst.(*net.TCPConn); ok {
 		if err := tcpConn.SetNoDelay(true); err != nil {
-			log.Printf("Failed to set TCP_NODELAY: %v", err)
+			log.Printf("Failed to set TCP_NODELAY on dst: %v", err)
 		}
 	}
 
@@ -96,7 +96,9 @@ func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
 		buf := bufferPool.Get().([]byte)
 		defer bufferPool.Put(buf)
 		_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
-		errChan <- err
+		if err != nil && err != io.EOF {
+			errChan <- err
+		}
 	}()
 
 	go func() {
@@ -104,14 +106,16 @@ func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
 		buf := bufferPool.Get().([]byte)
 		defer bufferPool.Put(buf)
 		_, err := io.CopyBuffer(src, dst, buf[:bufferSize])
-		errChan <- err
+		if err != nil && err != io.EOF {
+			errChan <- err
+		}
 	}()
 
 	wg.Wait()
 	close(errChan)
 
 	for err := range errChan {
-		if err != nil && err != io.EOF {
+		if err != nil {
 			return err
 		}
 	}
@@ -123,7 +127,7 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 64*1024, "Buffer size for TCP connections")
+	bufferSize := flag.Int("buffer-size", 512*1024, "Buffer size for TCP connections") // Increased buffer size
 	workerCount := flag.Int("workers", 100, "Number of concurrent workers")
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
