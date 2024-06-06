@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+
+	"github.com/valyala/fasthttp"
 )
 
 var bufferPool = sync.Pool{
@@ -25,7 +29,7 @@ type Forwarder struct {
 }
 
 // Start begins listening on the forwarder's configured port and forwards connections.
-func (f *Forwarder) Start(destinationHost string, bufferSize int, workerPool chan struct{}, wg *sync.WaitGroup) {
+func (f *Forwarder) Start(ctx context.Context, destinationHost string, bufferSize int, workerPool chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	listenAddr := fmt.Sprintf(":%d", f.ListenPort)
@@ -39,24 +43,29 @@ func (f *Forwarder) Start(destinationHost string, bufferSize int, workerPool cha
 	log.Printf("Listening on %s and forwarding to %s", listenAddr, targetAddr)
 
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Failed to accept connection: %v", err)
-			continue
-		}
-
 		select {
-		case workerPool <- struct{}{}:
-			go f.handleConnection(conn, targetAddr, bufferSize, workerPool)
+		case <-ctx.Done():
+			return
 		default:
-			log.Printf("Worker pool full, dropping connection from %s", conn.RemoteAddr().String())
-			conn.Close()
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Printf("Failed to accept connection: %v", err)
+				continue
+			}
+
+			select {
+			case workerPool <- struct{}{}:
+				go f.handleConnection(ctx, conn, targetAddr, bufferSize, workerPool)
+			default:
+				log.Printf("Worker pool full, dropping connection from %s", conn.RemoteAddr().String())
+				conn.Close()
+			}
 		}
 	}
 }
 
 // handleConnection forwards a single connection to the destination host and port.
-func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize int, workerPool chan struct{}) {
+func (f *Forwarder) handleConnection(ctx context.Context, src net.Conn, targetAddr string, bufferSize int, workerPool chan struct{}) {
 	defer src.Close()
 	defer func() { <-workerPool }()
 
@@ -67,7 +76,7 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 	}
 	defer dst.Close()
 
-	err = f.copyData(src, dst, bufferSize)
+	err = f.copyData(ctx, src, dst, bufferSize)
 	if err != nil {
 		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr().String(), targetAddr, err)
 		return
@@ -75,7 +84,7 @@ func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize
 }
 
 // copyData handles the actual data transfer between the source and destination.
-func (f *Forwarder) copyData(src, dst net.Conn, bufferSize int) error {
+func (f *Forwarder) copyData(ctx context.Context, src, dst net.Conn, bufferSize int) error {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 
@@ -101,7 +110,7 @@ func (f *Forwarder) copyData(src, dst net.Conn, bufferSize int) error {
 	close(errChan)
 
 	for err := range errChan {
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return err
 		}
 	}
@@ -125,6 +134,8 @@ func main() {
 	log.SetOutput(logFile)
 
 	workerPool := make(chan struct{}, *workerCount)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	ports := strings.Split(*listenPorts, ",")
 	for _, portStr := range ports {
@@ -134,10 +145,24 @@ func main() {
 		}
 
 		wg.Add(1)
-		go (&Forwarder{ListenPort: port}).Start(*destinationHost, *bufferSize, workerPool, &wg)
+		go (&Forwarder{ListenPort: port}).Start(ctx, *destinationHost, *bufferSize, workerPool, &wg)
 	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
+	// Profiling server
+	go func() {
+		log.Println(fasthttp.ListenAndServe(":6060", pprofHandler))
+	}()
+
 	wg.Wait()
+}
+
+func pprofHandler(ctx *fasthttp.RequestCtx) {
+	switch string(ctx.Path()) {
+	case "/debug/pprof/":
+		ctx.Redirect("/debug/pprof/", fasthttp.StatusMovedPermanently)
+	default:
+		ctx.Error("Unsupported path", fasthttp.StatusNotFound)
+	}
 }
