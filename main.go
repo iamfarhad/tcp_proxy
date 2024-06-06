@@ -60,9 +60,20 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	defer src.Close()
 	defer func() { <-workerPool }()
 
-	dst, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
+	var dst net.Conn
+	var err error
+
+	for i := 0; i < 3; i++ { // Retry logic for connecting to the target
+		dst, err = net.DialTimeout("tcp", targetAddr, 10*time.Second)
+		if err == nil {
+			break
+		}
+		log.Printf("Failed to connect to target %s: %v. Retrying...", targetAddr, err)
+		time.Sleep(2 * time.Second)
+	}
+
 	if err != nil {
-		log.Printf("Failed to connect to target %s: %v", targetAddr, err)
+		log.Printf("Failed to connect to target %s after 3 attempts: %v", targetAddr, err)
 		return
 	}
 	defer dst.Close()
@@ -177,7 +188,7 @@ func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int, errChan
 	defer bufferPool.Put(buf)
 	_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
 	if err != nil && err != io.EOF {
-		if !strings.Contains(err.Error(), "use of closed network connection") {
+		if !strings.Contains(err.Error(), "use of closed network connection") && !strings.Contains(err.Error(), "connection reset by peer") {
 			log.Printf("Error copying data: %v", err)
 		}
 	}
