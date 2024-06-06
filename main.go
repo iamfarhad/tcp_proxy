@@ -22,18 +22,26 @@ func handleClient(client net.Conn, serverAddr string) {
 	}
 	defer serverConn.Close()
 
+	errCh := make(chan error, 1)
+
 	go func() {
 		_, err := io.Copy(serverConn, client)
-		if err != nil {
-			fmt.Println("Error copying from client to server:", err)
-			return
-		}
+		errCh <- err
 	}()
 
-	_, err = io.Copy(client, serverConn)
+	go func() {
+		_, err := io.Copy(client, serverConn)
+		errCh <- err
+	}()
+
+	err = <-errCh
 	if err != nil {
-		fmt.Println("Error copying from server to client:", err)
-		return
+		fmt.Println("Error:", err)
+	}
+
+	err = <-errCh
+	if err != nil {
+		fmt.Println("Error:", err)
 	}
 }
 
