@@ -1,33 +1,33 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
-	_ "net/http/pprof" // Import for side-effect to register pprof handlers
+	_ "net/http/pprof"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+
+
 )
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 64*1024) // Increased buffer size for better throughput
+		return make([]byte, 64*1024)
 	},
 }
 
-// Forwarder sets up a listening port and forwards data to the same port on the destination host.
 type Forwarder struct {
 	ListenPort int
 }
 
-func (f *Forwarder) Start(ctx context.Context, destinationHost string, bufferSize int, workerPool chan struct{}, wg *sync.WaitGroup) {
+func (f *Forwarder) Start(destinationHost string, bufferSize int, workerPool chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	listenAddr := fmt.Sprintf(":%d", f.ListenPort)
@@ -41,28 +41,23 @@ func (f *Forwarder) Start(ctx context.Context, destinationHost string, bufferSiz
 	log.Printf("Listening on %s and forwarding to %s", listenAddr, targetAddr)
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			conn, err := listener.Accept()
-			if err != nil {
-				log.Printf("Failed to accept connection: %v", err)
-				continue
-			}
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Failed to accept connection: %v", err)
+			continue
+		}
 
-			select {
-			case workerPool <- struct{}{}:
-				go f.handleConnection(ctx, conn, targetAddr, bufferSize, workerPool)
-			default:
-				log.Printf("Worker pool full, dropping connection from %s", conn.RemoteAddr().String())
-				conn.Close()
-			}
+		select {
+		case workerPool <- struct{}{}:
+			go f.handleConnection(conn, targetAddr, bufferSize, workerPool)
+		default:
+			log.Printf("Worker pool full, dropping connection from %s", conn.RemoteAddr().String())
+			conn.Close()
 		}
 	}
 }
 
-func (f *Forwarder) handleConnection(ctx context.Context, src net.Conn, targetAddr string, bufferSize int, workerPool chan struct{}) {
+func (f *Forwarder) handleConnection(src net.Conn, targetAddr string, bufferSize int, workerPool chan struct{}) {
 	defer src.Close()
 	defer func() { <-workerPool }()
 
@@ -73,14 +68,26 @@ func (f *Forwarder) handleConnection(ctx context.Context, src net.Conn, targetAd
 	}
 	defer dst.Close()
 
-	err = f.copyData(ctx, src, dst, bufferSize)
+	// Set TCP_NODELAY to reduce latency
+	if tcpConn, ok := src.(*net.TCPConn); ok {
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			log.Printf("Failed to set TCP_NODELAY: %v", err)
+		}
+	}
+	if tcpConn, ok := dst.(*net.TCPConn); ok {
+		if err := tcpConn.SetNoDelay(true); err != nil {
+			log.Printf("Failed to set TCP_NODELAY: %v", err)
+		}
+	}
+
+	err = f.copyData(src, dst, bufferSize)
 	if err != nil {
 		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr().String(), targetAddr, err)
 		return
 	}
 }
 
-func (f *Forwarder) copyData(ctx context.Context, src, dst net.Conn, bufferSize int) error {
+func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 
@@ -131,8 +138,6 @@ func main() {
 	log.SetOutput(logFile)
 
 	workerPool := make(chan struct{}, *workerCount)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	ports := strings.Split(*listenPorts, ",")
 	for _, portStr := range ports {
@@ -142,12 +147,11 @@ func main() {
 		}
 
 		wg.Add(1)
-		go (&Forwarder{ListenPort: port}).Start(ctx, *destinationHost, *bufferSize, workerPool, &wg)
+		go (&Forwarder{ListenPort: port}).Start(*destinationHost, *bufferSize, workerPool, &wg)
 	}
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	// Start pprof HTTP server for profiling
 	go func() {
 		log.Printf("Starting pprof HTTP server on :%s", *pprofPort)
 		if err := http.ListenAndServe(fmt.Sprintf(":%s", *pprofPort), nil); err != nil {
