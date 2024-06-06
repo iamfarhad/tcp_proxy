@@ -25,12 +25,12 @@ func handleClient(client net.Conn, serverAddr string) {
 	errCh := make(chan error, 1)
 
 	go func() {
-		_, err := io.Copy(serverConn, client)
+		_, err := io.CopyBuffer(serverConn, client, make([]byte, 1024))
 		errCh <- err
 	}()
 
 	go func() {
-		_, err := io.Copy(client, serverConn)
+		_, err := io.CopyBuffer(client, serverConn, make([]byte, 1024))
 		errCh <- err
 	}()
 
