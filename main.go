@@ -104,8 +104,23 @@ func relayConnection(conn net.Conn, serverAddress string) {
 
 func copyData(wg *sync.WaitGroup, dst net.Conn, src net.Conn) {
 	defer wg.Done()
-	_, err := io.Copy(dst, src)
-	if err != nil {
-		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr(), dst.RemoteAddr(), err)
+	buf := make([]byte, 32*1024) // 32KB buffer
+	for {
+		n, err := src.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Error reading from %s: %v", src.RemoteAddr(), err)
+			}
+			break
+		}
+		if n > 0 {
+			log.Printf("Read %d bytes from %s", n, src.RemoteAddr())
+			m, err := dst.Write(buf[:n])
+			if err != nil {
+				log.Printf("Error writing to %s: %v", dst.RemoteAddr(), err)
+				break
+			}
+			log.Printf("Wrote %d bytes to %s", m, dst.RemoteAddr())
+		}
 	}
 }
