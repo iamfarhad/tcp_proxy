@@ -72,12 +72,8 @@ func (f *Forwarder) handleTCPConnection(src net.Conn, targetAddr string, bufferS
 	setTCPOptions(dst)
 
 	errChan := make(chan error, 2)
-	go func() {
-		errChan <- f.copyData(src, dst, bufferSize)
-	}()
-	go func() {
-		errChan <- f.copyData(dst, src, bufferSize)
-	}()
+	go f.copyData(src, dst, bufferSize, errChan)
+	go f.copyData(dst, src, bufferSize, errChan)
 
 	for i := 0; i < 2; i++ {
 		if err := <-errChan; err != nil && err != io.EOF {
@@ -147,7 +143,6 @@ func (f *Forwarder) StartUDP(destinationHost string, bufferSize int, wg *sync.Wa
 }
 
 func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAddr, targetAddr *net.UDPAddr, data []byte) {
-	// Forward to the destination
 	targetConn, err := net.DialUDP("udp", nil, targetAddr)
 	if err != nil {
 		log.Printf("Failed to connect to target UDP %s: %v", targetAddr, err)
@@ -161,7 +156,6 @@ func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAd
 		return
 	}
 
-	// Read response
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 
@@ -172,14 +166,13 @@ func (f *Forwarder) handleUDPConnection(srcConn *net.UDPConn, srcAddr *net.UDPAd
 		return
 	}
 
-	// Send response back to the source
 	_, err = srcConn.WriteToUDP(buf[:n], srcAddr)
 	if err != nil {
 		log.Printf("Failed to write to source UDP %s: %v", srcAddr, err)
 	}
 }
 
-func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
+func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int, errChan chan error) {
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)
 	_, err := io.CopyBuffer(dst, src, buf[:bufferSize])
@@ -188,7 +181,7 @@ func (f *Forwarder) copyData(src net.Conn, dst net.Conn, bufferSize int) error {
 			log.Printf("Error copying data: %v", err)
 		}
 	}
-	return err
+	errChan <- err
 }
 
 func main() {
@@ -196,8 +189,8 @@ func main() {
 
 	listenPorts := flag.String("listen-ports", "21212,21213", "Comma-separated list of ports to listen on")
 	destinationHost := flag.String("destination-host", "localhost", "Destination host to forward to")
-	bufferSize := flag.Int("buffer-size", 64*1024, "Buffer size for TCP connections") // Adjusted buffer size
-	workerCount := flag.Int("workers", 1000, "Number of concurrent workers") // Increased worker pool size
+	bufferSize := flag.Int("buffer-size", 64*1024, "Buffer size for TCP connections")
+	workerCount := flag.Int("workers", 1000, "Number of concurrent workers")
 	pprofPort := flag.String("pprof-port", "6060", "Port for pprof HTTP server")
 	flag.Parse()
 
