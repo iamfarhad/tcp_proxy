@@ -85,15 +85,19 @@ func relayConnection(conn net.Conn, serverAddress string) {
 
 	serverConn, err := net.Dial("tcp", serverAddress)
 	if err != nil {
-		log.Printf("Error connecting to server: %v", err)
+		log.Printf("Error connecting to server %s: %v", serverAddress, err)
 		return
 	}
 	defer serverConn.Close()
 
 	log.Printf("Relaying data between client %s and server %s", conn.RemoteAddr(), serverConn.RemoteAddr())
-	go io.Copy(serverConn, conn)
-	_, err = io.Copy(conn, serverConn)
+	go copyData(serverConn, conn)
+	copyData(conn, serverConn)
+}
+
+func copyData(dst net.Conn, src net.Conn) {
+	_, err := io.Copy(dst, src)
 	if err != nil {
-		log.Printf("Error relaying connection: %v", err)
+		log.Printf("Error copying data from %s to %s: %v", src.RemoteAddr(), dst.RemoteAddr(), err)
 	}
 }
